@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { User, Attachment } from '../types';
 import { api, fileToDataUrl } from '../lib/api';
 import { AudioRecorder } from './AudioRecorder';
-import { FileText, Mic, Video, Image, Send, X, Tag, Paperclip, AlertCircle } from 'lucide-react';
+import { FileText, Mic, Video, Image, Send, X, Tag, Paperclip, AlertCircle, Volume2, Upload } from 'lucide-react';
 
 interface PostComposerProps {
   currentUser: User;
@@ -31,13 +31,15 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Handle Document upload
   const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 25 * 1024 * 1024) {
-      setError("Le document ne doit pas dépasser 25 Mo.");
+    if (file.size > 30 * 1024 * 1024) {
+      setError("Le document ne doit pas dépasser 30 Mo.");
       return;
     }
 
@@ -54,6 +56,33 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
       e.target.value = '';
     } catch {
       setError("Échec de la lecture du document.");
+    }
+  };
+
+  // Handle Direct Audio File upload
+  const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 25 * 1024 * 1024) {
+      setError("Le fichier vocal ne doit pas dépasser 25 Mo.");
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const newAtt: Attachment = {
+        id: 'aud_' + Date.now(),
+        name: file.name,
+        type: 'audio',
+        url: dataUrl,
+        size: file.size,
+      };
+      setAttachments((prev) => [...prev, newAtt]);
+      setShowAudioRecorder(false);
+      e.target.value = '';
+    } catch {
+      setError("Échec de la lecture du fichier vocal.");
     }
   };
 
@@ -125,17 +154,24 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() && attachments.length === 0) {
-      setError("Veuillez rédiger un message ou ajouter une pièce jointe avant de publier.");
+    
+    // Auto-fill content if user shared a vocal or document without text
+    const trimmed = content.trim();
+    if (!trimmed && attachments.length === 0) {
+      setError("Veuillez rédiger un message ou enregistrer/joindre un vocal ou document avant de publier.");
       return;
     }
+
+    const finalContent = trimmed || (attachments.some((a) => a.type === 'audio') 
+      ? 'Note vocale médicale partagée par ' + currentUser.prenom + ' ' + currentUser.nom
+      : 'Document académique partagé');
 
     setError(null);
     setSubmitting(true);
 
     try {
       await api.posts.create({
-        content: content.trim(),
+        content: finalContent,
         attachments,
         tags: selectedTags,
       });
@@ -153,7 +189,7 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden mb-6">
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-sm overflow-hidden mb-6 transition-colors">
       <form onSubmit={handleSubmit} className="p-5">
         
         {/* Author Header */}
@@ -165,11 +201,11 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
             referrerPolicy="no-referrer"
           />
           <div>
-            <span className="font-bold text-slate-800 text-sm">
+            <span className="font-bold text-slate-800 dark:text-white text-sm">
               {currentUser.prenom} {currentUser.nom}
             </span>
-            <div className="flex items-center space-x-2 text-[11px] text-slate-500">
-              <span className="bg-teal-50 text-teal-700 px-2 py-0.5 rounded font-semibold border border-teal-100">
+            <div className="flex items-center space-x-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span className="bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 px-2 py-0.5 rounded font-semibold border border-teal-100 dark:border-teal-900">
                 {currentUser.promo}
               </span>
               <span>• Partager avec la communauté médicale</span>
@@ -183,11 +219,11 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
           rows={3}
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="Partager un cours, une question de stage, une fiche de synthèse, un cas clinique ou un document..."
-          className="w-full text-slate-800 placeholder:text-slate-400 text-sm border-none focus:outline-none focus:ring-0 resize-none"
+          placeholder="Partager un cours, une question de stage, une fiche de synthèse, un cas clinique ou un vocal..."
+          className="w-full text-slate-800 dark:text-white placeholder:text-slate-400 bg-transparent text-sm border-none focus:outline-none focus:ring-0 resize-none"
         />
 
-        {/* Audio Recorder Module */}
+        {/* Audio Recorder Module (with mic or upload options) */}
         {showAudioRecorder && (
           <div className="mt-3 mb-3">
             <AudioRecorder
@@ -202,35 +238,64 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
 
         {/* Attachment Previews */}
         {attachments.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 mb-3">
-            {attachments.map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs"
-              >
-                <div className="flex items-center space-x-2 truncate pr-2">
-                  {att.type === 'document' && <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />}
-                  {att.type === 'audio' && <Mic className="w-4 h-4 text-teal-600 flex-shrink-0" />}
-                  {att.type === 'video' && <Video className="w-4 h-4 text-purple-600 flex-shrink-0" />}
-                  {att.type === 'image' && <Image className="w-4 h-4 text-emerald-600 flex-shrink-0" />}
-                  <span className="truncate font-medium text-slate-700">{att.name}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(att.id)}
-                  className="p-1 text-slate-400 hover:text-red-500 rounded"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-3 mb-3">
+            {attachments.map((att) => {
+              if (att.type === 'audio') {
+                return (
+                  <div
+                    key={att.id}
+                    className="p-3 bg-teal-50/90 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 rounded-2xl space-y-2 col-span-1 sm:col-span-2 shadow-2xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 truncate">
+                        <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                        <span className="font-bold text-teal-900 dark:text-teal-200 truncate text-xs">
+                          {att.name || 'Note Vocale Médicale Prête à être Partagée'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(att.id)}
+                        className="p-1 text-slate-400 hover:text-rose-500 rounded transition"
+                        title="Supprimer ce vocal"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {/* Live preview of recorded/uploaded audio */}
+                    <audio controls src={att.url} className="w-full h-8 rounded-lg" />
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={att.id}
+                  className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-2xl text-xs"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center space-x-2 truncate pr-2">
+                    {att.type === 'document' && <FileText className="w-4 h-4 text-blue-600 shrink-0" />}
+                    {att.type === 'video' && <Video className="w-4 h-4 text-purple-600 shrink-0" />}
+                    {att.type === 'image' && <Image className="w-4 h-4 text-emerald-600 shrink-0" />}
+                    <span className="truncate font-medium text-slate-700 dark:text-slate-200">{att.name}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(att.id)}
+                    className="p-1 text-slate-400 hover:text-rose-500 rounded transition"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
         {/* Medical Tags Selector */}
-        <div className="mt-3 pt-3 border-t border-slate-100">
-          <div className="flex items-center space-x-1.5 text-xs text-slate-500 mb-2">
-            <Tag className="w-3.5 h-3.5 text-teal-600" />
+        <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400 mb-2">
+            <Tag className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
             <span className="font-semibold">Matière ou Module FMS :</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -241,10 +306,10 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
                   key={tag}
                   type="button"
                   onClick={() => toggleTag(tag)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  className={`px-2.5 py-1 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                     isSelected
-                      ? 'bg-teal-600 text-white shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                      ? 'bg-teal-600 text-white shadow-2xs'
+                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}
                 >
                   {tag}
@@ -255,19 +320,34 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
         </div>
 
         {error && (
-          <div className="flex items-center space-x-2 mt-3 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <div className="flex items-center space-x-2 mt-3 p-2.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 rounded-2xl text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         {/* Actions Bar */}
-        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
           <div className="flex items-center space-x-1 sm:space-x-2">
             
+            {/* Vocal note button */}
+            <button
+              type="button"
+              onClick={() => setShowAudioRecorder((prev) => !prev)}
+              className={`p-2 rounded-xl transition flex items-center space-x-1.5 text-xs font-bold cursor-pointer ${
+                showAudioRecorder
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 dark:hover:bg-teal-950 border border-teal-200 dark:border-teal-800'
+              }`}
+              title="Enregistrer ou importer un vocal médical"
+            >
+              <Mic className="w-4 h-4" />
+              <span>Vocal</span>
+            </button>
+
             {/* Document button */}
-            <label className="p-2 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre un document (PDF, Word...)">
-              <FileText className="w-4 h-4 text-blue-600" />
+            <label className="p-2 text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-300 hover:bg-teal-50 dark:hover:bg-slate-800 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre un document (PDF, Word...)">
+              <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <span className="hidden sm:inline">Document</span>
               <input
                 type="file"
@@ -277,24 +357,9 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
               />
             </label>
 
-            {/* Vocal note button */}
-            <button
-              type="button"
-              onClick={() => setShowAudioRecorder((prev) => !prev)}
-              className={`p-2 rounded-xl transition flex items-center space-x-1.5 text-xs font-medium ${
-                showAudioRecorder
-                  ? 'bg-teal-100 text-teal-800'
-                  : 'text-slate-600 hover:text-teal-700 hover:bg-teal-50'
-              }`}
-              title="Enregistrer un vocal"
-            >
-              <Mic className="w-4 h-4 text-teal-600" />
-              <span className="hidden sm:inline">Vocal</span>
-            </button>
-
             {/* Video button */}
-            <label className="p-2 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre une vidéo">
-              <Video className="w-4 h-4 text-purple-600" />
+            <label className="p-2 text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-300 hover:bg-teal-50 dark:hover:bg-slate-800 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre une vidéo">
+              <Video className="w-4 h-4 text-purple-600 dark:text-purple-400" />
               <span className="hidden sm:inline">Vidéo</span>
               <input
                 type="file"
@@ -305,8 +370,8 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
             </label>
 
             {/* Image button */}
-            <label className="p-2 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre une image / cas clinique">
-              <Image className="w-4 h-4 text-emerald-600" />
+            <label className="p-2 text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-300 hover:bg-teal-50 dark:hover:bg-slate-800 rounded-xl cursor-pointer transition flex items-center space-x-1.5 text-xs font-medium" title="Joindre une image / cas clinique">
+              <Image className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <span className="hidden sm:inline">Image</span>
               <input
                 type="file"

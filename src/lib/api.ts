@@ -326,6 +326,11 @@ export const api = {
         method: 'DELETE',
       });
     },
+    sendTestNotification: async (): Promise<{ notification: AppNotification }> => {
+      return fetchWithAuth('/api/notifications/test', {
+        method: 'POST',
+      });
+    },
   },
 };
 

@@ -1155,6 +1155,38 @@ app.delete("/api/notifications", (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// Trigger a test notification for the user to verify the notification center and push toast
+app.post("/api/notifications/test", (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  const user = db.users.find((u) => u.id === token);
+  if (!user) {
+    res.status(401).json({ error: "Non autorisé" });
+    return;
+  }
+
+  const testNotif: AppNotification = {
+    id: "notif_test_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+    recipientId: user.id,
+    actorId: "usr_fms_notif_bot",
+    actorName: "Dr. Ben Salem (CHU Hédi Chaker)",
+    actorAvatar: "https://api.dicebear.com/7.x/initials/svg?seed=BS&backgroundColor=0f766e",
+    actorPromo: "Enseignant Hospitalo-Universitaire",
+    type: "post_comment",
+    title: "Commentaire clinique sur votre partage",
+    message: "Excellente synthèse sémiologique ! Document très utile pour les stages hospitaliers.",
+    targetId: "",
+    targetType: "post",
+    isRead: false,
+    createdAt: new Date().toISOString()
+  };
+
+  db.notifications = db.notifications || [];
+  db.notifications.unshift(testNotif);
+  saveDatabase();
+  broadcast("NEW_NOTIFICATION", testNotif);
+  res.json({ notification: testNotif });
+});
+
 // ======================== ADMINISTRATION ENDPOINTS ========================
 
 // Get all users with stats (Admin only)

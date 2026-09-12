@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Trash2, Play, Pause, Volume2, AlertCircle } from 'lucide-react';
+import { Mic, Square, Trash2, Play, Pause, Volume2, AlertCircle, Upload, CheckCircle2 } from 'lucide-react';
 import { Attachment } from '../types';
+import { fileToDataUrl } from '../lib/api';
 
 interface AudioRecorderProps {
   onAudioReady: (attachment: Attachment) => void;
@@ -9,44 +10,95 @@ interface AudioRecorderProps {
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCancel }) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<any>(null);
-  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Determine best supported audio MIME type across all platforms (Safari/iOS/Chrome/Firefox)
+  const getSupportedMimeType = (): string => {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/aac',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+    ];
+    for (const type of candidates) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        return type;
+      }
+    }
+    return '';
+  };
 
   const startRecording = async () => {
     setMicError(null);
     try {
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("L'enregistrement vocal via microphone n'est pas supporté par ce navigateur. Vous pouvez importer un fichier audio.");
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+
+      const mimeType = getSupportedMimeType();
+      const options: MediaRecorderOptions = mimeType ? { mimeType } : {};
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsProcessing(true);
+        const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+        
+        const extension = actualMime.includes('mp4') || actualMime.includes('aac') 
+          ? 'm4a' 
+          : actualMime.includes('ogg') 
+            ? 'ogg' 
+            : 'webm';
+
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64Data = reader.result as string;
-          setAudioUrl(base64Data);
+          setIsProcessing(false);
+
+          // AUTO-ATTACH IMMEDIATELY so the user NEVER loses their vocal!
+          const nowStr = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/:/g, '-');
+          onAudioReady({
+            id: 'aud_' + Date.now(),
+            name: `Note_Vocale_FMS_${nowStr}.${extension}`,
+            type: 'audio',
+            url: base64Data,
+            duration: recordingSeconds || 3,
+            size: audioBlob.size,
+          });
         };
         reader.readAsDataURL(audioBlob);
 
-        // Stop media tracks
-        stream.getTracks().forEach((track) => track.stop());
+        // Stop all audio tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(200); // chunk every 200ms
       setIsRecording(true);
       setRecordingSeconds(0);
 
@@ -54,36 +106,63 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
         setRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err: any) {
-      console.error('Microphone access denied:', err);
-      setMicError("Impossible d'accéder au microphone. Veuillez autoriser l'accès au micro dans votre navigateur.");
+      console.error('Microphone error:', err);
+      setMicError(
+        err.message || 
+        "Impossible d'accéder au microphone. Veuillez autoriser le micro dans votre navigateur ou importer directement un fichier audio ci-dessous."
+      );
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
       clearInterval(timerIntervalRef.current);
+      setIsRecording(false);
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (err) {
+        console.error('Error stopping recorder:', err);
+      }
+    }
+  };
+
+  // Handle direct audio file upload from disk or phone
+  const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 25 * 1024 * 1024) {
+      setMicError("Le fichier audio ne doit pas dépasser 25 Mo.");
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      const dataUrl = await fileToDataUrl(file);
+      setIsProcessing(false);
+
+      onAudioReady({
+        id: 'aud_' + Date.now(),
+        name: file.name,
+        type: 'audio',
+        url: dataUrl,
+        size: file.size,
+      });
+      e.target.value = '';
+    } catch {
+      setIsProcessing(false);
+      setMicError("Échec de la lecture du fichier audio.");
     }
   };
 
   useEffect(() => {
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
     };
   }, []);
-
-  const handleValidate = () => {
-    if (audioUrl) {
-      onAudioReady({
-        id: 'aud_' + Date.now(),
-        name: `Vocal_Medical_${new Date().toLocaleTimeString('fr-FR').replace(/:/g, '-')}.webm`,
-        type: 'audio',
-        url: audioUrl,
-        duration: recordingSeconds || 5,
-      });
-    }
-  };
 
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -91,122 +170,112 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
     return `${mins < 10 ? '0' : ''}${mins}:${remainder < 10 ? '0' : ''}${remainder}`;
   };
 
-  const togglePlayback = () => {
-    if (!audioPlayerRef.current) return;
-    if (isPlaying) {
-      audioPlayerRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioPlayerRef.current.play();
-      setIsPlaying(true);
-    }
-  };
-
   return (
-    <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-xl space-y-3">
+    <div className="p-4 bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-900/60 rounded-2xl space-y-3 animate-in fade-in duration-200">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wider text-teal-800 flex items-center space-x-1.5">
-          <Volume2 className="w-4 h-4 text-teal-600" />
-          <span>Note Vocale Médicale</span>
+        <span className="text-xs font-bold uppercase tracking-wider text-teal-800 dark:text-teal-300 flex items-center space-x-1.5">
+          <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+          <span>Partage Vocal Médical FMS</span>
         </span>
         <button
           type="button"
           onClick={onCancel}
-          className="text-xs text-slate-500 hover:text-slate-800 font-medium"
+          className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-medium transition"
         >
           Annuler
         </button>
       </div>
 
       {micError && (
-        <div className="flex items-center space-x-2 text-xs text-red-700 bg-red-100/80 p-2.5 rounded-lg">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{micError}</span>
+        <div className="flex items-start space-x-2 text-xs text-rose-700 dark:text-rose-300 bg-rose-100/90 dark:bg-rose-950/60 p-3 rounded-xl border border-rose-200 dark:border-rose-900">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">{micError}</p>
+            <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400">
+              💡 Vous pouvez utiliser le bouton « Importer un vocal » ci-dessous pour joindre un enregistrement sans micro.
+            </p>
+          </div>
         </div>
       )}
 
       {/* Recording in progress */}
       {isRecording && (
-        <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-teal-300 shadow-sm">
+        <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-teal-300 dark:border-teal-700 shadow-sm">
           <div className="flex items-center space-x-3">
             <span className="relative flex h-3.5 w-3.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-600"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-600"></span>
             </span>
-            <span className="text-sm font-mono font-bold text-slate-800">
+            <span className="text-sm font-mono font-black text-slate-900 dark:text-white">
               {formatTime(recordingSeconds)}
             </span>
-            <span className="text-xs text-slate-500 italic">Enregistrement audio en cours...</span>
+            <div className="flex items-center space-x-1">
+              <span className="inline-block w-1 h-3 bg-teal-500 rounded-full animate-bounce" />
+              <span className="inline-block w-1 h-4 bg-teal-600 rounded-full animate-bounce [animation-delay:0.1s]" />
+              <span className="inline-block w-1 h-2 bg-teal-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+            </div>
+            <span className="text-xs text-slate-600 dark:text-slate-300 font-medium hidden sm:inline">
+              Enregistrement en cours...
+            </span>
           </div>
 
           <button
             type="button"
             onClick={stopRecording}
-            className="flex items-center space-x-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow transition"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer"
           >
             <Square className="w-3.5 h-3.5 fill-current" />
-            <span>Arrêter</span>
+            <span>Terminer & Joindre</span>
           </button>
         </div>
       )}
 
-      {/* Finished Recording with Preview */}
-      {!isRecording && audioUrl && (
-        <div className="flex flex-col space-y-2 p-3 bg-white rounded-lg border border-teal-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={togglePlayback}
-                className="w-8 h-8 rounded-full bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition"
-              >
-                {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
-              </button>
-              <audio
-                ref={audioPlayerRef}
-                src={audioUrl}
-                onEnded={() => setIsPlaying(false)}
-                className="hidden"
-              />
-              <span className="text-xs font-medium text-slate-700">
-                Aperçu audio ({formatTime(recordingSeconds)})
-              </span>
-            </div>
+      {/* Processing State */}
+      {isProcessing && (
+        <div className="flex items-center justify-center space-x-2 py-3 bg-white dark:bg-slate-900 rounded-xl border border-teal-200 dark:border-teal-800 text-xs text-teal-700 dark:text-teal-300 font-semibold">
+          <div className="animate-spin rounded-full h-4 w-4 border-2 border-teal-600 border-t-transparent" />
+          <span>Finalisation et encodage du vocal...</span>
+        </div>
+      )}
 
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={() => { setAudioUrl(null); setRecordingSeconds(0); }}
-                className="p-1.5 text-slate-400 hover:text-red-500 transition"
-                title="Recommencer"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={handleValidate}
-                className="px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg shadow-sm transition"
-              >
-                Joindre la note vocale
-              </button>
-            </div>
+      {/* Idle state - Choose microphone or import audio */}
+      {!isRecording && !isProcessing && (
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-dashed border-teal-300 dark:border-teal-800 text-center space-y-3">
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+            Enregistrez votre voix en direct ou importez une note vocale depuis votre téléphone ou ordinateur :
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5">
+            {/* Direct Microphone Button */}
+            <button
+              type="button"
+              onClick={startRecording}
+              className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+            >
+              <Mic className="w-4 h-4" />
+              <span>Démarrer l'enregistrement micro</span>
+            </button>
+
+            {/* Direct Audio File Import Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition cursor-pointer border border-slate-300 dark:border-slate-700"
+            >
+              <Upload className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+              <span>Importer un fichier vocal (.mp3, .m4a, .wav)</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.m4a,.wav,.ogg,.aac,.webm"
+              onChange={handleAudioFileUpload}
+              className="hidden"
+            />
           </div>
-        </div>
-      )}
 
-      {/* Idle state - Click to start */}
-      {!isRecording && !audioUrl && (
-        <div className="text-center py-3 bg-white rounded-lg border border-dashed border-teal-300">
-          <button
-            type="button"
-            onClick={startRecording}
-            className="inline-flex items-center space-x-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg shadow transition"
-          >
-            <Mic className="w-4 h-4" />
-            <span>Démarrer l'enregistrement vocal</span>
-          </button>
-          <p className="text-[11px] text-slate-500 mt-1.5">
-            Idéal pour résumer un cours, un cas clinique ou poser une question orale.
+          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+            Dès que vous cliquez sur « Terminer », le vocal est directement attaché à votre publication.
           </p>
         </div>
       )}

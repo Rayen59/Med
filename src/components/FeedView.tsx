@@ -374,13 +374,29 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
                         return (
                           <div
                             key={att.id}
-                            className="p-3.5 bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-900 rounded-2xl flex flex-col space-y-2"
+                            className="p-3.5 sm:p-4 bg-teal-50/90 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 rounded-2xl flex flex-col space-y-2.5 shadow-2xs"
                           >
-                            <div className="flex items-center space-x-2 text-xs font-bold text-teal-900 dark:text-teal-200">
-                              <Volume2 className="w-4 h-4 text-teal-700 dark:text-teal-400" />
-                              <span>{att.name || 'Enregistrement vocal médical'}</span>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2 text-xs font-bold text-teal-900 dark:text-teal-200 truncate pr-2">
+                                <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                                <span className="truncate">{att.name || 'Note Vocale Médicale FMS'}</span>
+                              </div>
+                              <a
+                                href={att.url}
+                                download={att.name || 'note_vocale_fms.webm'}
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition shrink-0"
+                                title="Télécharger l'enregistrement vocal"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">Télécharger</span>
+                              </a>
                             </div>
-                            <audio controls src={att.url} className="w-full h-9 rounded-lg" />
+                            <audio
+                              controls
+                              preload="metadata"
+                              src={att.url}
+                              className="w-full h-10 rounded-xl"
+                            />
                           </div>
                         );
                       }

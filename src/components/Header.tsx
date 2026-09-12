@@ -60,7 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSlidingPanel,
   onCloseSlidingPanel,
 }) => {
+  const [isNotificationBoxOpen, setIsNotificationBoxOpen] = React.useState(false);
   const isAdmin = currentUser.role === 'admin';
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const navItems = [
     { id: 'feed', label: 'Accueil & Partage', icon: Stethoscope },
@@ -150,6 +152,9 @@ export const Header: React.FC<HeaderProps> = ({
                 onToggleNotificationsEnabled={onToggleNotificationsEnabled}
                 latestPushNotification={latestPushNotification}
                 onDismissPushNotification={onDismissPushNotification}
+                isOpen={isNotificationBoxOpen}
+                onToggleOpen={() => setIsNotificationBoxOpen((prev) => !prev)}
+                onClose={() => setIsNotificationBoxOpen(false)}
               />
 
               {/* Quick Document Search button */}
@@ -230,6 +235,8 @@ export const Header: React.FC<HeaderProps> = ({
         notificationsEnabled={notificationsEnabled}
         onToggleNotificationsEnabled={onToggleNotificationsEnabled}
         onOpenDocSearch={onOpenDocSearch}
+        onOpenNotifications={() => setIsNotificationBoxOpen(true)}
+        unreadNotificationsCount={unreadCount}
       />
     </>
   );

@@ -31,6 +31,8 @@ interface SlidingPanelProps {
   notificationsEnabled: boolean;
   onToggleNotificationsEnabled: () => void;
   onOpenDocSearch: () => void;
+  onOpenNotifications?: () => void;
+  unreadNotificationsCount?: number;
 }
 
 export const SlidingPanel: React.FC<SlidingPanelProps> = ({
@@ -45,6 +47,8 @@ export const SlidingPanel: React.FC<SlidingPanelProps> = ({
   notificationsEnabled,
   onToggleNotificationsEnabled,
   onOpenDocSearch,
+  onOpenNotifications,
+  unreadNotificationsCount = 0,
 }) => {
   const isAdmin = currentUser.role === 'admin';
 
@@ -138,7 +142,39 @@ export const SlidingPanel: React.FC<SlidingPanelProps> = ({
         </div>
 
         {/* Scrollable Navigation Items */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+
+          {/* Direct Boîte de Notifications Button */}
+          {onOpenNotifications && (
+            <button
+              onClick={() => {
+                onClose();
+                onOpenNotifications();
+              }}
+              className="w-full flex items-center justify-between p-2.5 rounded-2xl bg-teal-950/60 hover:bg-teal-900/80 border border-teal-800/80 transition cursor-pointer text-left shadow-xs"
+            >
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center flex-shrink-0">
+                  <Bell className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-bold text-white flex items-center space-x-2">
+                    <span>Boîte de Notifications</span>
+                    {unreadNotificationsCount > 0 && (
+                      <span className="px-1.5 py-0.2 bg-rose-500 text-white text-[9px] font-black rounded-full shadow">
+                        {unreadNotificationsCount}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-teal-300/80 truncate">
+                    Voir les alertes, réactions & sondages
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-teal-400 flex-shrink-0" />
+            </button>
+          )}
+
           <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
             Navigation Principale
           </div>
