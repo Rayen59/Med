@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Post } from './types';
+import { User, Post, AppNotification } from './types';
 import { api, getStoredToken, subscribeToLiveUpdates } from './lib/api';
 import { AuthModal } from './components/AuthModal';
 import { Header } from './components/Header';
@@ -16,8 +16,28 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [activeTab, setActiveTab] = useState<'feed' | 'forums' | 'quizzes' | 'polls' | 'spaces' | 'admin'>('feed');
   const [posts, setPosts] = useState<Post[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [latestPushNotification, setLatestPushNotification] = useState<AppNotification | null>(null);
   const [isLiveConnected, setIsLiveConnected] = useState(true);
   const [showGlobalDocSearch, setShowGlobalDocSearch] = useState(false);
+  const [isSlidingPanelOpen, setIsSlidingPanelOpen] = useState(false);
+
+  // Notifications preference (persistent in localStorage)
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('fms_notifications_enabled');
+      if (saved !== null) return saved === 'true';
+    }
+    return true;
+  });
+
+  const toggleNotificationsEnabled = () => {
+    setNotificationsEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('fms_notifications_enabled', String(next));
+      return next;
+    });
+  };
 
   // Executable Dark Mode state
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -61,7 +81,6 @@ export default function App() {
       const res = await api.auth.getMe();
       setCurrentUser(res.user);
       if (res.user.role === 'admin') {
-        // If admin logged in, open admin view or feed
         setActiveTab('admin');
       }
     } catch {
@@ -82,9 +101,20 @@ export default function App() {
     }
   };
 
+  // Fetch notifications for user
+  const loadNotifications = async () => {
+    try {
+      const res = await api.notifications.getAll();
+      setNotifications(res.notifications || []);
+    } catch (err) {
+      console.error('Failed to load notifications', err);
+    }
+  };
+
   useEffect(() => {
     if (currentUser) {
       loadPosts();
+      loadNotifications();
 
       // Subscribe to Server-Sent Events for instant updates
       const unsubscribe = subscribeToLiveUpdates((event, payload) => {
@@ -111,6 +141,19 @@ export default function App() {
                 : p
             )
           );
+        } else if (event === 'NEW_NOTIFICATION') {
+          // If notification is intended for current logged in student/doctor
+          if (payload.recipientId === currentUser.id) {
+            setNotifications((prev) => [payload, ...prev]);
+
+            // Show mobile phone-like push banner
+            setLatestPushNotification(payload);
+
+            // Auto dismiss after 5 seconds
+            setTimeout(() => {
+              setLatestPushNotification((curr) => (curr?.id === payload.id ? null : curr));
+            }, 5000);
+          }
         } else if (event === 'USER_STATUS_CHANGED' && payload.userId === currentUser.id) {
           // If the current user got banned or restricted, refresh profile
           api.auth.getMe().then((res) => setCurrentUser(res.user)).catch(() => {
@@ -127,6 +170,7 @@ export default function App() {
     api.auth.logout();
     setCurrentUser(null);
     setActiveTab('feed');
+    setIsSlidingPanelOpen(false);
   };
 
   if (authChecking) {
@@ -161,12 +205,24 @@ export default function App() {
       <Header
         currentUser={currentUser}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setIsSlidingPanelOpen(false);
+        }}
         onLogout={handleLogout}
         isLiveConnected={isLiveConnected}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
         onOpenDocSearch={() => setShowGlobalDocSearch(true)}
+        notifications={notifications}
+        onNotificationsChange={setNotifications}
+        notificationsEnabled={notificationsEnabled}
+        onToggleNotificationsEnabled={toggleNotificationsEnabled}
+        latestPushNotification={latestPushNotification}
+        onDismissPushNotification={() => setLatestPushNotification(null)}
+        isSlidingPanelOpen={isSlidingPanelOpen}
+        onToggleSlidingPanel={() => setIsSlidingPanelOpen((prev) => !prev)}
+        onCloseSlidingPanel={() => setIsSlidingPanelOpen(false)}
       />
 
       {/* Main Tab Content */}

@@ -2,7 +2,7 @@ import express, { Request, Response } from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { AppDatabase, User, Post, SpaceFolder, Forum, ForumMessage, Quiz, QuizSubmission, Poll } from "./src/types";
+import { AppDatabase, User, Post, SpaceFolder, Forum, ForumMessage, Quiz, QuizSubmission, Poll, AppNotification, PostComment } from "./src/types";
 
 const app = express();
 const PORT = 3000;
@@ -28,7 +28,8 @@ function initDatabase(): AppDatabase {
     forumMessages: [],
     quizzes: [],
     quizSubmissions: [],
-    polls: []
+    polls: [],
+    notifications: []
   };
 
   if (!fs.existsSync(DB_FILE)) {
@@ -47,7 +48,8 @@ function initDatabase(): AppDatabase {
       forumMessages: parsed.forumMessages || [],
       quizzes: parsed.quizzes || [],
       quizSubmissions: parsed.quizSubmissions || [],
-      polls: parsed.polls || []
+      polls: parsed.polls || [],
+      notifications: parsed.notifications || []
     };
   } catch (err) {
     console.error("Error reading db.json, reinitializing blank db", err);
@@ -74,6 +76,43 @@ function broadcast(event: string, payload: any) {
   sseClients.forEach((client) => {
     client.write(`event: update\ndata: ${data}\n\n`);
   });
+}
+
+// Helper to create and broadcast user-targeted notifications
+function sendNotification(params: {
+  recipientId: string;
+  actor: User;
+  type: 'post_like' | 'post_comment' | 'comment_reply' | 'poll_vote' | 'quiz_submission';
+  title: string;
+  message: string;
+  targetId: string;
+  targetType: 'post' | 'poll' | 'quiz' | 'forum';
+}) {
+  if (!params.recipientId || params.recipientId === params.actor.id) return;
+
+  const notif: AppNotification = {
+    id: "notif_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+    recipientId: params.recipientId,
+    actorId: params.actor.id,
+    actorName: `${params.actor.prenom} ${params.actor.nom}`,
+    actorAvatar: params.actor.avatarUrl,
+    actorPromo: params.actor.promo,
+    type: params.type,
+    title: params.title,
+    message: params.message,
+    targetId: params.targetId,
+    targetType: params.targetType,
+    isRead: false,
+    createdAt: new Date().toISOString()
+  };
+
+  db.notifications = db.notifications || [];
+  db.notifications.unshift(notif);
+  if (db.notifications.length > 300) {
+    db.notifications = db.notifications.slice(0, 300);
+  }
+  saveDatabase();
+  broadcast("NEW_NOTIFICATION", notif);
 }
 
 // Secret Administration credentials
@@ -415,6 +454,17 @@ app.post("/api/posts/:id/like", (req: Request, res: Response) => {
     post.likes.splice(index, 1);
   } else {
     post.likes.push(user.id);
+    if (post.authorId !== user.id) {
+      sendNotification({
+        recipientId: post.authorId,
+        actor: user,
+        type: 'post_like',
+        title: 'Nouvelle réaction',
+        message: `${user.prenom} ${user.nom} (${user.promo}) a aimé votre publication.`,
+        targetId: post.id,
+        targetType: 'post'
+      });
+    }
   }
 
   saveDatabase();
@@ -422,7 +472,7 @@ app.post("/api/posts/:id/like", (req: Request, res: Response) => {
   res.json({ likes: post.likes });
 });
 
-// Add comment to post
+// Add comment or reply to post
 app.post("/api/posts/:id/comment", (req: Request, res: Response) => {
   const token = req.headers.authorization?.replace("Bearer ", "");
   const user = db.users.find((u) => u.id === token);
@@ -438,7 +488,7 @@ app.post("/api/posts/:id/comment", (req: Request, res: Response) => {
     return;
   }
 
-  const { content } = req.body;
+  const { content, parentId } = req.body;
   if (!content || !content.trim()) {
     res.status(400).json({ error: "Le commentaire ne peut pas être vide." });
     return;
@@ -450,19 +500,66 @@ app.post("/api/posts/:id/comment", (req: Request, res: Response) => {
     return;
   }
 
-  const newComment = {
+  let replyToUserName: string | undefined = undefined;
+  let parentComment: PostComment | undefined = undefined;
+
+  if (parentId) {
+    parentComment = (post.comments || []).find((c) => c.id === parentId);
+    if (parentComment) {
+      replyToUserName = parentComment.userName;
+    }
+  }
+
+  const newComment: PostComment = {
     id: "com_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
     userId: user.id,
     userName: `${user.prenom} ${user.nom}`,
     userAvatar: user.avatarUrl,
     userPromo: user.promo,
     content: content.trim(),
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    parentId: parentId || undefined,
+    replyToUserName
   };
 
+  if (!post.comments) post.comments = [];
   post.comments.push(newComment);
+
+  if (parentComment) {
+    parentComment.replies = parentComment.replies || [];
+    parentComment.replies.push(newComment);
+  }
+
   saveDatabase();
   broadcast("COMMENT_POST", { postId: post.id, comment: newComment });
+
+  // Notifications logic
+  if (parentComment && parentComment.userId !== user.id) {
+    // Notify author of the parent comment
+    sendNotification({
+      recipientId: parentComment.userId,
+      actor: user,
+      type: 'comment_reply',
+      title: 'Réponse à votre commentaire',
+      message: `${user.prenom} ${user.nom} a répondu à votre commentaire : "${content.trim().slice(0, 45)}..."`,
+      targetId: post.id,
+      targetType: 'post'
+    });
+  }
+
+  // Also notify post author if they are not the commenter and not the parent comment author
+  if (post.authorId !== user.id && (!parentComment || post.authorId !== parentComment.userId)) {
+    sendNotification({
+      recipientId: post.authorId,
+      actor: user,
+      type: 'post_comment',
+      title: 'Nouveau commentaire',
+      message: `${user.prenom} ${user.nom} a commenté votre publication : "${content.trim().slice(0, 45)}..."`,
+      targetId: post.id,
+      targetType: 'post'
+    });
+  }
+
   res.status(201).json({ comment: newComment, comments: post.comments });
 });
 
@@ -838,6 +935,18 @@ app.post("/api/quizzes/:id/submit", (req: Request, res: Response) => {
   saveDatabase();
   broadcast("QUIZ_SUBMITTED", { quizId: quiz.id, submission });
 
+  if (quiz.authorId !== user.id) {
+    sendNotification({
+      recipientId: quiz.authorId,
+      actor: user,
+      type: 'quiz_submission',
+      title: 'Participation au Quiz QCM',
+      message: `${user.prenom} ${user.nom} (${user.promo}) a passé votre quiz "${quiz.title}" (Score : ${percentage}%).`,
+      targetId: quiz.id,
+      targetType: 'quiz'
+    });
+  }
+
   res.json({
     score: totalScore,
     totalPoints: quiz.totalPoints,
@@ -972,7 +1081,78 @@ app.post("/api/polls/:id/vote", (req: Request, res: Response) => {
 
   saveDatabase();
   broadcast("POLL_VOTED", poll);
+
+  if (poll.authorId !== user.id) {
+    sendNotification({
+      recipientId: poll.authorId,
+      actor: user,
+      type: 'poll_vote',
+      title: 'Vote au sondage',
+      message: `${user.prenom} ${user.nom} (${user.promo}) a voté à votre sondage : "${poll.question.slice(0, 45)}..."`,
+      targetId: poll.id,
+      targetType: 'poll'
+    });
+  }
+
   res.json({ poll });
+});
+
+// ======================== NOTIFICATIONS ENDPOINTS ========================
+
+// Get notifications for current user
+app.get("/api/notifications", (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) {
+    res.status(401).json({ error: "Non autorisé" });
+    return;
+  }
+  const userNotifs = (db.notifications || [])
+    .filter((n) => n.recipientId === token)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  res.json({ notifications: userNotifs });
+});
+
+// Mark single notification as read
+app.post("/api/notifications/:id/read", (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) {
+    res.status(401).json({ error: "Non autorisé" });
+    return;
+  }
+  const notif = (db.notifications || []).find((n) => n.id === req.params.id && n.recipientId === token);
+  if (notif) {
+    notif.isRead = true;
+    saveDatabase();
+  }
+  res.json({ success: true });
+});
+
+// Mark all notifications as read
+app.post("/api/notifications/read-all", (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) {
+    res.status(401).json({ error: "Non autorisé" });
+    return;
+  }
+  (db.notifications || []).forEach((n) => {
+    if (n.recipientId === token) {
+      n.isRead = true;
+    }
+  });
+  saveDatabase();
+  res.json({ success: true });
+});
+
+// Clear all notifications for user
+app.delete("/api/notifications", (req: Request, res: Response) => {
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  if (!token) {
+    res.status(401).json({ error: "Non autorisé" });
+    return;
+  }
+  db.notifications = (db.notifications || []).filter((n) => n.recipientId !== token);
+  saveDatabase();
+  res.json({ success: true });
 });
 
 // ======================== ADMINISTRATION ENDPOINTS ========================

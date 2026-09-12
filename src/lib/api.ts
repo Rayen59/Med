@@ -1,4 +1,4 @@
-import { User, Post, SpaceFolder, Forum, ForumMessage, Quiz, QuizSubmission, Poll } from '../types';
+import { User, Post, SpaceFolder, Forum, ForumMessage, Quiz, QuizSubmission, Poll, AppNotification } from '../types';
 
 const TOKEN_KEY = 'med_sfax_token';
 
@@ -121,10 +121,10 @@ export const api = {
       });
     },
 
-    addComment: async (id: string, content: string): Promise<{ comment: any; comments: any[] }> => {
+    addComment: async (id: string, content: string, parentId?: string): Promise<{ comment: any; comments: any[] }> => {
       return fetchWithAuth(`/api/posts/${id}/comment`, {
         method: 'POST',
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, parentId }),
       });
     },
   },
@@ -302,6 +302,27 @@ export const api = {
 
     deleteUser: async (userId: string): Promise<{ success: boolean; id: string }> => {
       return fetchWithAuth(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+      });
+    },
+  },
+
+  notifications: {
+    getAll: async (): Promise<{ notifications: AppNotification[] }> => {
+      return fetchWithAuth('/api/notifications');
+    },
+    markAsRead: async (id: string): Promise<{ success: boolean }> => {
+      return fetchWithAuth(`/api/notifications/${id}/read`, {
+        method: 'POST',
+      });
+    },
+    markAllAsRead: async (): Promise<{ success: boolean }> => {
+      return fetchWithAuth('/api/notifications/read-all', {
+        method: 'POST',
+      });
+    },
+    clearAll: async (): Promise<{ success: boolean }> => {
+      return fetchWithAuth('/api/notifications', {
         method: 'DELETE',
       });
     },

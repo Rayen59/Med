@@ -36,6 +36,32 @@ export interface PostComment {
   userPromo: string;
   content: string;
   createdAt: string;
+  parentId?: string; // If this is a reply to another comment
+  replyToUserName?: string;
+  replies?: PostComment[];
+}
+
+export type NotificationType =
+  | 'post_like'
+  | 'post_comment'
+  | 'comment_reply'
+  | 'poll_vote'
+  | 'quiz_submission';
+
+export interface AppNotification {
+  id: string;
+  recipientId: string;
+  actorId: string;
+  actorName: string;
+  actorAvatar: string;
+  actorPromo: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  targetId: string;
+  targetType: 'post' | 'poll' | 'quiz' | 'forum';
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface Post {
@@ -157,4 +183,5 @@ export interface AppDatabase {
   quizzes: Quiz[];
   quizSubmissions: QuizSubmission[];
   polls: Poll[];
+  notifications: AppNotification[];
 }
