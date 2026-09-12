@@ -1,0 +1,6 @@
+{
+  "name": "Médecine Sfax",
+  "description": "Portail collaboratif et académique des étudiants de la Faculté de Médecine de Sfax : partage en temps réel, forums sécurisés, quiz QCM avec classement et espaces organisés.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
