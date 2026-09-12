@@ -19,6 +19,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
   const timerIntervalRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const shouldDiscardRef = useRef<boolean>(false);
 
   // Determine best supported audio MIME type across all platforms (Safari/iOS/Chrome/Firefox)
   const getSupportedMimeType = (): string => {
@@ -41,6 +42,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
 
   const startRecording = async () => {
     setMicError(null);
+    shouldDiscardRef.current = false;
     try {
       // Check if getUserMedia is available
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -57,12 +59,25 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
+        if (event.data && event.data.size > 0 && !shouldDiscardRef.current) {
           audioChunksRef.current.push(event.data);
         }
       };
 
       mediaRecorder.onstop = () => {
+        // Stop all audio tracks immediately
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+
+        // If the user cancelled or clicked delete on the recording, discard completely!
+        if (shouldDiscardRef.current) {
+          audioChunksRef.current = [];
+          setIsProcessing(false);
+          return;
+        }
+
         setIsProcessing(true);
         const actualMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
@@ -75,6 +90,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
 
         const reader = new FileReader();
         reader.onloadend = () => {
+          if (shouldDiscardRef.current) {
+            setIsProcessing(false);
+            return;
+          }
+
           const base64Data = reader.result as string;
           setIsProcessing(false);
 
@@ -90,12 +110,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
           });
         };
         reader.readAsDataURL(audioBlob);
-
-        // Stop all audio tracks
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((track) => track.stop());
-          streamRef.current = null;
-        }
       };
 
       mediaRecorder.start(200); // chunk every 200ms
@@ -124,6 +138,33 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
         console.error('Error stopping recorder:', err);
       }
     }
+  };
+
+  const discardRecording = () => {
+    shouldDiscardRef.current = true;
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    setIsProcessing(false);
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (err) {
+        console.error('Error stopping recorder on discard:', err);
+      }
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    audioChunksRef.current = [];
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    onCancel();
   };
 
   // Handle direct audio file upload from disk or phone
@@ -179,8 +220,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
         </span>
         <button
           type="button"
-          onClick={onCancel}
-          className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-medium transition"
+          onClick={discardRecording}
+          className="text-xs text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 font-medium transition cursor-pointer"
+          title="Fermer sans enregistrer"
         >
           Annuler
         </button>
@@ -200,7 +242,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
 
       {/* Recording in progress */}
       {isRecording && (
-        <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-teal-300 dark:border-teal-700 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-teal-300 dark:border-teal-700 shadow-sm">
           <div className="flex items-center space-x-3">
             <span className="relative flex h-3.5 w-3.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
@@ -219,14 +261,26 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioReady, onCa
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer"
-          >
-            <Square className="w-3.5 h-3.5 fill-current" />
-            <span>Terminer & Joindre</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={discardRecording}
+              className="flex items-center justify-center space-x-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900 rounded-xl text-xs font-semibold transition cursor-pointer min-h-[40px]"
+              title="Supprimer et abandonner cet enregistrement vocal"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Supprimer le vocal</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={stopRecording}
+              className="flex-1 sm:flex-none flex items-center justify-center space-x-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer min-h-[40px]"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>Terminer & Joindre</span>
+            </button>
+          </div>
         </div>
       )}
 

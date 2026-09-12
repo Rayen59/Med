@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Post, User } from '../types';
+import { Post, User, Attachment } from '../types';
 import { api } from '../lib/api';
 import { PostComposer } from './PostComposer';
 import { EditPostModal } from './EditPostModal';
@@ -26,7 +26,8 @@ import {
   Files,
   CornerDownRight,
   Reply,
-  X
+  X,
+  CheckCircle2
 } from 'lucide-react';
 
 interface FeedViewProps {
@@ -40,6 +41,8 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
   const [savingPost, setSavingPost] = useState<Post | null>(null);
   const [postToDelete, setPostToDelete] = useState<Post | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [attachmentToDelete, setAttachmentToDelete] = useState<{ post: Post; attachment: Attachment } | null>(null);
+  const [deletingAttachment, setDeletingAttachment] = useState(false);
   const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
   const [commentText, setCommentText] = useState<Record<string, string>>({});
@@ -49,6 +52,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [showDocSearch, setShowDocSearch] = useState(false);
   const [toastError, setToastError] = useState<string | null>(null);
+  const [toastSuccess, setToastSuccess] = useState<string | null>(null);
 
   const showErrorToast = (msg: string) => {
     setToastError(msg);
@@ -78,11 +82,52 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
       setPostToDelete(null);
       setOpenMenuPostId(null);
       onRefresh();
+      setToastSuccess('Publication supprimée avec succès.');
+      setTimeout(() => setToastSuccess(null), 3500);
     } catch (err: any) {
       console.error('Delete failed', err);
       showErrorToast(err.message || 'Impossible de supprimer cette publication');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // Confirm delete specific attachment (e.g. vocal or document)
+  const handleConfirmDeleteAttachment = async () => {
+    if (!attachmentToDelete) return;
+    const { post, attachment } = attachmentToDelete;
+    setDeletingAttachment(true);
+    try {
+      const remainingAttachments = (post.attachments || []).filter((a) => a.id !== attachment.id);
+      const isContentOnlyVocal =
+        !post.content ||
+        post.content.trim() === '' ||
+        post.content.startsWith('Note vocale médicale partagée') ||
+        post.content === 'Document académique partagé';
+
+      if (remainingAttachments.length === 0 && isContentOnlyVocal) {
+        // If the post only consisted of this vocal and default auto-fill text, delete the entire post
+        await api.posts.delete(post.id);
+      } else {
+        // Update post with the attachment removed
+        await api.posts.update(post.id, {
+          attachments: remainingAttachments,
+        });
+      }
+      setAttachmentToDelete(null);
+      setOpenMenuPostId(null);
+      onRefresh();
+      setToastSuccess(
+        attachment.type === 'audio'
+          ? 'Note vocale supprimée avec succès.'
+          : 'Pièce jointe supprimée avec succès.'
+      );
+      setTimeout(() => setToastSuccess(null), 3500);
+    } catch (err: any) {
+      console.error('Delete attachment failed', err);
+      showErrorToast(err.message || 'Impossible de supprimer cette pièce jointe.');
+    } finally {
+      setDeletingAttachment(false);
     }
   };
 
@@ -147,6 +192,14 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
         <div className="fixed top-4 right-4 z-50 px-4 py-3 bg-rose-600 text-white text-xs font-bold rounded-xl shadow-xl flex items-center space-x-2 animate-in fade-in">
           <AlertTriangle className="w-4 h-4" />
           <span>{toastError}</span>
+        </div>
+      )}
+
+      {/* Toast Success Alert */}
+      {toastSuccess && (
+        <div className="fixed top-4 right-4 z-50 px-4 py-3 bg-teal-600 text-white text-xs font-bold rounded-xl shadow-xl flex items-center space-x-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{toastSuccess}</span>
         </div>
       )}
 
@@ -284,6 +337,20 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
 
                         {canManage && (
                           <>
+                            {post.attachments?.some((a) => a.type === 'audio') && (
+                              <button
+                                onClick={() => {
+                                  const audioAtt = post.attachments?.find((a) => a.type === 'audio');
+                                  if (audioAtt) setAttachmentToDelete({ post, attachment: audioAtt });
+                                  setOpenMenuPostId(null);
+                                }}
+                                className="w-full flex items-center space-x-2 px-3.5 py-2 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 font-semibold transition"
+                              >
+                                <Volume2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                                <span>Supprimer le vocal</span>
+                              </button>
+                            )}
+
                             <button
                               onClick={() => {
                                 setEditingPost(post);
@@ -293,7 +360,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
                             >
                               <Edit2 className="w-3.5 h-3.5 text-blue-600" />
                               <span>
-                                {isAuthor ? "Modifier le texte" : "Modifier (Admin)"}
+                                {isAuthor ? "Modifier la publication" : "Modifier (Admin)"}
                               </span>
                             </button>
                             
@@ -358,14 +425,26 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
                                 <p className="text-[10px] text-slate-500 dark:text-slate-400">Document académique FMS</p>
                               </div>
                             </div>
-                            <a
-                              href={att.url}
-                              download={att.name}
-                              className="flex items-center space-x-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold hover:bg-teal-600 hover:text-white hover:border-teal-600 transition"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              <span>Télécharger</span>
-                            </a>
+                            <div className="flex items-center space-x-1.5 shrink-0">
+                              <a
+                                href={att.url}
+                                download={att.name}
+                                className="flex items-center space-x-1.5 px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold hover:bg-teal-600 hover:text-white hover:border-teal-600 transition"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Télécharger</span>
+                              </a>
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAttachmentToDelete({ post, attachment: att })}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-xl transition cursor-pointer"
+                                  title="Supprimer ce document"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         );
                       }
@@ -376,20 +455,33 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
                             key={att.id}
                             className="p-3.5 sm:p-4 bg-teal-50/90 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 rounded-2xl flex flex-col space-y-2.5 shadow-2xs"
                           >
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center space-x-2 text-xs font-bold text-teal-900 dark:text-teal-200 truncate pr-2">
                                 <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
                                 <span className="truncate">{att.name || 'Note Vocale Médicale FMS'}</span>
                               </div>
-                              <a
-                                href={att.url}
-                                download={att.name || 'note_vocale_fms.webm'}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition shrink-0"
-                                title="Télécharger l'enregistrement vocal"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">Télécharger</span>
-                              </a>
+                              <div className="flex items-center space-x-1.5 shrink-0">
+                                <a
+                                  href={att.url}
+                                  download={att.name || 'note_vocale_fms.webm'}
+                                  className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition"
+                                  title="Télécharger l'enregistrement vocal"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Télécharger</span>
+                                </a>
+                                {canManage && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAttachmentToDelete({ post, attachment: att })}
+                                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/70 dark:hover:bg-rose-900/70 border border-rose-200 dark:border-rose-900 transition cursor-pointer"
+                                    title="Supprimer définitivement cette note vocale"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Supprimer le vocal</span>
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             <audio
                               controls
@@ -403,11 +495,24 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
 
                       if (att.type === 'video') {
                         return (
-                          <div key={att.id} className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black">
+                          <div key={att.id} className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black group">
                             <video controls src={att.url} className="w-full max-h-96 object-contain" />
-                            <div className="p-2.5 bg-slate-900 text-white text-xs flex items-center space-x-2">
-                              <Film className="w-4 h-4 text-purple-400" />
-                              <span className="truncate">{att.name}</span>
+                            <div className="p-2.5 bg-slate-900 text-white text-xs flex items-center justify-between">
+                              <div className="flex items-center space-x-2 truncate pr-2">
+                                <Film className="w-4 h-4 text-purple-400 shrink-0" />
+                                <span className="truncate">{att.name}</span>
+                              </div>
+                              {canManage && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAttachmentToDelete({ post, attachment: att })}
+                                  className="text-rose-400 hover:text-rose-300 text-xs font-semibold flex items-center space-x-1 px-2 py-0.5 rounded hover:bg-rose-950 transition cursor-pointer"
+                                  title="Supprimer cette vidéo"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Supprimer</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -415,13 +520,24 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
 
                       if (att.type === 'image') {
                         return (
-                          <div key={att.id} className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800">
+                          <div key={att.id} className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 group">
                             <img
                               src={att.url}
                               alt={att.name}
                               className="w-full max-h-96 object-cover hover:scale-[1.01] transition-transform duration-200"
                               referrerPolicy="no-referrer"
                             />
+                            {canManage && (
+                              <button
+                                type="button"
+                                onClick={() => setAttachmentToDelete({ post, attachment: att })}
+                                className="absolute top-3 right-3 px-2.5 py-1.5 bg-slate-950/80 hover:bg-rose-600 text-white rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-md transition cursor-pointer backdrop-blur-xs"
+                                title="Supprimer cette image"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Supprimer</span>
+                              </button>
+                            )}
                           </div>
                         );
                       }
@@ -682,7 +798,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
               <button
                 type="button"
                 onClick={() => setPostToDelete(null)}
-                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold"
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Annuler
               </button>
@@ -690,9 +806,48 @@ export const FeedView: React.FC<FeedViewProps> = ({ currentUser, posts, onRefres
                 type="button"
                 disabled={deleting}
                 onClick={handleConfirmDelete}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
               >
                 {deleting ? 'Suppression...' : 'Supprimer définitivement'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IN-APP DELETE ATTACHMENT / VOCAL CONFIRMATION MODAL */}
+      {attachmentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto mb-3">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              {attachmentToDelete.attachment.type === 'audio'
+                ? 'Supprimer cette note vocale ?'
+                : 'Supprimer cette pièce jointe ?'}
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-5 leading-relaxed">
+              {attachmentToDelete.attachment.type === 'audio'
+                ? "Voulez-vous retirer définitivement cet enregistrement vocal de la publication ? L'audio sera effacé et la publication mise à jour."
+                : "Voulez-vous retirer définitivement ce fichier de la publication ?"}
+            </p>
+
+            <div className="flex justify-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setAttachmentToDelete(null)}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={deletingAttachment}
+                onClick={handleConfirmDeleteAttachment}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
+              >
+                {deletingAttachment ? 'Suppression...' : 'Supprimer définitivement'}
               </button>
             </div>
           </div>

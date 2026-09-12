@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { User, Attachment } from '../types';
 import { api, fileToDataUrl } from '../lib/api';
 import { AudioRecorder } from './AudioRecorder';
-import { FileText, Mic, Video, Image, Send, X, Tag, Paperclip, AlertCircle, Volume2, Upload } from 'lucide-react';
+import { FileText, Mic, Video, Image, Send, X, Tag, Paperclip, AlertCircle, Volume2, Upload, Trash2 } from 'lucide-react';
 
 interface PostComposerProps {
   currentUser: User;
@@ -140,6 +140,7 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
 
   const removeAttachment = (id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setError(null);
   };
 
   const toggleTag = (tag: string) => {
@@ -244,9 +245,9 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
                 return (
                   <div
                     key={att.id}
-                    className="p-3 bg-teal-50/90 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 rounded-2xl space-y-2 col-span-1 sm:col-span-2 shadow-2xs"
+                    className="p-3.5 bg-teal-50/90 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 rounded-2xl space-y-2.5 col-span-1 sm:col-span-2 shadow-2xs"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center space-x-2 truncate">
                         <Volume2 className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
                         <span className="font-bold text-teal-900 dark:text-teal-200 truncate text-xs">
@@ -256,10 +257,11 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
                       <button
                         type="button"
                         onClick={() => removeAttachment(att.id)}
-                        className="p-1 text-slate-400 hover:text-rose-500 rounded transition"
-                        title="Supprimer ce vocal"
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/80 dark:hover:bg-rose-900 text-rose-600 dark:text-rose-300 rounded-xl text-xs font-bold border border-rose-200 dark:border-rose-900 transition cursor-pointer shrink-0 min-h-[36px]"
+                        title="Supprimer définitivement ce vocal"
                       >
-                        <X className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>Supprimer le vocal</span>
                       </button>
                     </div>
                     {/* Live preview of recorded/uploaded audio */}
@@ -282,9 +284,11 @@ export const PostComposer: React.FC<PostComposerProps> = ({ currentUser, onPostC
                   <button
                     type="button"
                     onClick={() => removeAttachment(att.id)}
-                    className="p-1 text-slate-400 hover:text-rose-500 rounded transition"
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg text-xs font-semibold transition cursor-pointer min-h-[32px]"
+                    title="Supprimer ce fichier"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Retirer</span>
                   </button>
                 </div>
               );
